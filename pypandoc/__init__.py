@@ -69,7 +69,7 @@ def convert(source, to, format=None, extra_args=(), encoding='utf-8',
 
 
 def convert_text(source, to, format, extra_args=(), encoding='utf-8',
-                 outputfile=None, filters=None):
+                 outputfile=None, filters=None, return_bytes=False):
     """Converts given `source` from `format` to `to`.
 
     :param str source: Unicode string or bytes (see encoding)
@@ -89,6 +89,8 @@ def convert_text(source, to, format, extra_args=(), encoding='utf-8',
 
     :param list filters: pandoc filters e.g. filters=['pandoc-citeproc']
 
+    :param bool return_byes whether to return resulting output as bytes instead of string
+
     :returns: converted string (unicode) or an empty string if an outputfile was given
     :rtype: unicode
 
@@ -98,11 +100,11 @@ def convert_text(source, to, format, extra_args=(), encoding='utf-8',
     """
     source = _as_unicode(source, encoding)
     return _convert_input(source, format, 'string', to, extra_args=extra_args,
-                          outputfile=outputfile, filters=filters)
+                          outputfile=outputfile, filters=filters, return_bytes=return_bytes)
 
 
 def convert_file(source_file, to, format=None, extra_args=(), encoding='utf-8',
-                 outputfile=None, filters=None):
+                 outputfile=None, filters=None, return_bytes=False):
     """Converts given `source` from `format` to `to`.
 
     :param str source_file: file path (see encoding)
@@ -124,6 +126,8 @@ def convert_file(source_file, to, format=None, extra_args=(), encoding='utf-8',
 
     :param list filters: pandoc filters e.g. filters=['pandoc-citeproc']
 
+    :param bool return_byes whether to return resulting output as bytes instead of string
+
     :returns: converted string (unicode) or an empty string if an outputfile was given
     :rtype: unicode
 
@@ -135,7 +139,7 @@ def convert_file(source_file, to, format=None, extra_args=(), encoding='utf-8',
         raise RuntimeError("source_file is not a valid path")
     format = _identify_format_from_path(source_file, format)
     return _convert_input(source_file, format, 'path', to, extra_args=extra_args,
-                          outputfile=outputfile, filters=filters)
+                          outputfile=outputfile, filters=filters, return_bytes=return_bytes)
 
 
 def _identify_path(source):
@@ -229,14 +233,6 @@ def _validate_formats(format, to, outputfile):
             'Invalid output format! Got %s but expected one of these: %s' % (
                 base_to_format, ', '.join(to_formats)))
 
-    # list from https://github.com/jgm/pandoc/blob/master/pandoc.hs
-    # `[...] where binaries = ["odt","docx","epub","epub3"] [...]`
-    # pdf has the same restriction
-    if base_to_format in ["odt", "docx", "epub", "epub3", "pdf"] and not outputfile:
-        raise RuntimeError(
-            'Output to %s only works by using a outputfile.' % base_to_format
-        )
-
     if base_to_format == "pdf":
         # pdf formats needs to actually have a to format of latex and a
         # filename with an ending pf .pdf
@@ -252,10 +248,23 @@ def _validate_formats(format, to, outputfile):
 
 
 def _convert_input(source, format, input_type, to, extra_args=(), outputfile=None,
-                   filters=None):
+                   filters=None, return_bytes=False):
     _ensure_pandoc_path()
 
     format, to = _validate_formats(format, to, outputfile)
+
+    # list from https://github.com/jgm/pandoc/blob/master/pandoc.hs
+    # `[...] where binaries = ["odt","docx","epub","epub3"] [...]`
+    # pdf has the same restriction
+    if to in ["odt", "docx", "epub", "epub3", "pdf"] and not outputfile:
+        if not return_bytes:
+            raise RuntimeError(
+                'Output to {format} requires return_bytes or outputfile'.format(
+                    format=to
+                )
+            )
+        else:
+            outputfile = '-'
 
     string_input = input_type == 'string'
     input_file = [source] if not string_input else []
@@ -309,11 +318,12 @@ def _convert_input(source, format, input_type, to, extra_args=(), outputfile=Non
         # the input. We treat that the same as when we exit with an error...
         raise RuntimeError('Pandoc died with exitcode "%s" during conversion.' % (p.returncode))
 
-    try:
-        stdout = stdout.decode('utf-8')
-    except UnicodeDecodeError:
-        # this shouldn't happen: pandoc more or less garantees that the output is utf-8!
-        raise RuntimeError('Pandoc output was not utf-8.')
+    if not return_bytes:
+        try:
+            stdout = stdout.decode('utf-8')
+        except UnicodeDecodeError:
+            # this shouldn't happen: pandoc more or less garantees that the output is utf-8!
+            raise RuntimeError('Pandoc output was not utf-8.')
 
     # check that pandoc returned successfully
     if p.returncode != 0:
